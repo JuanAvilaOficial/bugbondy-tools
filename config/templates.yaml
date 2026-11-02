@@ -1,0 +1,15 @@
+version: "1.0"
+nuclei:
+  allowed_templates:
+    - "cves/"
+    - "cve/"
+    - "technologies/"
+    - "misconfiguration/"
+    - "default-logins/"
+    - "exposure/"
+    - "fuzz/"
+    - "auth/"
+    - "ssl/"
+    - "headers/"
+    - "secrets/"
+    - "cloud/"

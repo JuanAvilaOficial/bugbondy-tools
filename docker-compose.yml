@@ -1,0 +1,11 @@
+services:
+  pipeline:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./config:/app/config
+    command: ["uv", "run", "bbp", "migrate"]

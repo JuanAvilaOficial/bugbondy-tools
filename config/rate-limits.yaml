@@ -1,0 +1,31 @@
+# límites por programa y por herramienta
+version: "1.0"
+
+global:
+  max_requests_per_second: 15
+  default_concurrency: 5
+  cooldown_seconds_on_429: 60
+  user_agent: "BugBountySecurityResearch/1.0"
+
+programs:
+  example-program:
+    max_requests_per_second: 10
+    concurrency: 3
+    daily_request_budget: 50000
+
+tools:
+  nuclei:
+    rate_limit: 150
+    concurrency: 25
+    bulk_size: 25
+  ffuf:
+    rate_limit: 40
+    threads: 10
+  httpx:
+    rate_limit: 150
+    threads: 20
+  nmap:
+    max_rate: 100
+    timing_template: "T3"
+  subfinder:
+    concurrency: 10

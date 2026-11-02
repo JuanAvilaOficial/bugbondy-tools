@@ -1,0 +1,32 @@
+# activos in-scope/out-of-scope por programa (fuente de verdad)
+version: "1.0"
+programs:
+  - id: "example-program"
+    name: "Example Bug Bounty Program"
+    platform: "hackerone" # hackerone | bugcrowd | intigriti | self-hosted
+    policy_url: "https://example.com/security"
+    scope:
+      in_scope:
+        targets:
+          - target: "*.example.com"
+            type: "wildcard"
+            eligible_for_bounty: true
+          - target: "https://api.example.com"
+            type: "url"
+            eligible_for_bounty: true
+          - target: "192.0.2.0/24"
+            type: "cidr"
+            eligible_for_bounty: false
+      out_of_scope:
+        targets:
+          - target: "support.example.com"
+            type: "domain"
+            reason: "Third-party SaaS integration"
+          - target: "payments.example.com"
+            type: "domain"
+            reason: "Separate compliance scope"
+        vulnerability_types:
+          - "Denial of Service (DoS/DDoS)"
+          - "Social Engineering / Phishing"
+          - "SPF / DKIM / DMARC records without demonstrated spoofing"
+          - "Rate limiting without concrete security impact"

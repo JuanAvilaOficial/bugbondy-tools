@@ -1,0 +1,47 @@
+# qué MCP está habilitado en qué etapa
+version: "1.0"
+
+mcp_servers:
+  sqlite_pipeline:
+    command: "uvx"
+    args: ["mcp-server-sqlite", "--db-path", "state/pipeline.db"]
+    description: "Acceso a base de datos de estado del pipeline"
+  fetch:
+    command: "uvx"
+    args: ["mcp-server-fetch"]
+    description: "Consulta web y descarga de assets con rate limits"
+  filesystem:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    description: "Acceso a archivos locales de artefactos y reportes"
+
+stages:
+  "00-scope-manager":
+    enabled_mcps:
+      - "sqlite_pipeline"
+      - "filesystem"
+  "01-recon":
+    enabled_mcps:
+      - "sqlite_pipeline"
+      - "filesystem"
+  "02-fingerprint":
+    enabled_mcps:
+      - "sqlite_pipeline"
+      - "fetch"
+  "03-vuln-scan":
+    enabled_mcps:
+      - "sqlite_pipeline"
+  "04-triage":
+    enabled_mcps:
+      - "sqlite_pipeline"
+  "05-verify":
+    enabled_mcps:
+      - "sqlite_pipeline"
+      - "fetch"
+  "06-report":
+    enabled_mcps:
+      - "sqlite_pipeline"
+      - "filesystem"
+  "07-submit-track":
+    enabled_mcps:
+      - "sqlite_pipeline"
