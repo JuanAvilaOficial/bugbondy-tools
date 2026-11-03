@@ -56,6 +56,26 @@ def test_intigriti_client_mock_details_and_not_found():
         client.get_program_details("non-existent-program")
 
 
+def test_intigriti_client_url_resolution():
+    client = IntigritiClient(mock_mode=True)
+    url = "https://app.intigriti.com/researcher/programs/wl/wirelesslogic/preview/detail"
+
+    # Extracción de candidato
+    candidate = client.extract_program_candidate(url)
+    assert candidate == "wirelesslogic"
+
+    # Obtener detalles pasando la URL completa
+    details = client.get_program_details(url)
+    assert details["name"] == "Wireless Logic Bug Bounty"
+    assert details["handle"] == "wirelesslogic"
+
+    # Construir alcance pasando la URL completa
+    scope = client.build_program_scope(url)
+    assert scope.id == "wirelesslogic"
+    assert "*.wirelesslogic.com" in [r.target for r in scope.in_scope_targets]
+    assert "blog.wirelesslogic.com" in [r.target for r in scope.out_of_scope_targets]
+
+
 def test_intigriti_client_build_program_scope():
     client = IntigritiClient(mock_mode=True)
     scope = client.build_program_scope("intigriti-sandbox")

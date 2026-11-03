@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -64,6 +65,19 @@ MOCK_PROGRAMS: list[dict[str, Any]] = [
         "maxBounty": {"value": 6000, "currency": "EUR"},
         "industry": "Fintech",
         "webLinks": {"details": "https://app.intigriti.com/programs/acme-corp"},
+    },
+    {
+        "id": "prog-wl-03",
+        "handle": "wirelesslogic",
+        "name": "Wireless Logic Bug Bounty",
+        "following": True,
+        "confidentialityLevel": {"id": 1, "value": "Public"},
+        "status": {"id": 1, "value": "Open"},
+        "type": {"id": 1, "value": "BugBounty"},
+        "minBounty": {"value": 150, "currency": "EUR"},
+        "maxBounty": {"value": 5000, "currency": "EUR"},
+        "industry": "IoT / Telecom",
+        "webLinks": {"details": "https://app.intigriti.com/researcher/programs/wl/wirelesslogic/preview/detail"},
     },
 ]
 
@@ -154,6 +168,49 @@ MOCK_PROGRAM_DETAILS: dict[str, dict[str, Any]] = {
                     "automatedTooling": 1,
                     "userAgent": "Intigriti-Acme-Agent/1.0",
                     "requestHeader": "X-Intigriti-Acme: researcher",
+                },
+                "safeHarbour": True,
+            },
+        },
+    },
+    "prog-wl-03": {
+        "id": "prog-wl-03",
+        "handle": "wirelesslogic",
+        "name": "Wireless Logic Bug Bounty",
+        "confidentialityLevel": {"id": 1, "value": "Public"},
+        "status": {"id": 1, "value": "Open"},
+        "type": {"id": 1, "value": "BugBounty"},
+        "webLinks": {"details": "https://app.intigriti.com/researcher/programs/wl/wirelesslogic/preview/detail"},
+        "domains": {
+            "id": "ver-dom-wl",
+            "createdAt": 1700000000,
+            "content": [
+                {
+                    "id": "dom-wl-1",
+                    "type": {"id": 1, "value": "Url"},
+                    "endpoint": "*.wirelesslogic.com",
+                    "tier": {"id": 1, "value": "Tier 1"},
+                    "description": "Main domain wildcard",
+                },
+                {
+                    "id": "dom-wl-2",
+                    "type": {"id": 1, "value": "Url"},
+                    "endpoint": "blog.wirelesslogic.com",
+                    "tier": {"id": 5, "value": "Out of scope"},
+                    "description": "Marketing blog",
+                },
+            ],
+        },
+        "rulesOfEngagement": {
+            "id": "ver-roe-wl",
+            "createdAt": 1700000000,
+            "content": {
+                "description": "Safe Harbor enabled. Follow responsible disclosure.",
+                "testingRequirements": {
+                    "intigritiMe": True,
+                    "automatedTooling": 1,
+                    "userAgent": "Intigriti-WL-Researcher/1.0",
+                    "requestHeader": "X-BugBounty-Hacker: researcher",
                 },
                 "safeHarbour": True,
             },
@@ -265,23 +322,73 @@ class IntigritiClient:
         except httpx.HTTPError as e:
             raise IntigritiAPIError(f"Error conectando con la API de Intigriti: {e}") from e
 
+    @staticmethod
+    def extract_program_candidate(raw_identifier: str) -> str:
+        """Extrae el handle o identificador de un programa a partir de una URL o texto directo."""
+        raw = raw_identifier.strip()
+        if not raw.startswith(("http://", "https://")):
+            return raw.strip("/")
+        path = urlparse(raw).path.strip("/")
+        parts = [p for p in path.split("/") if p]
+        if "programs" in parts:
+            idx = parts.index("programs")
+            after = parts[idx + 1 :]
+            clean_after = [p for p in after if p not in ("preview", "detail", "overview", "rules", "domains")]
+            if clean_after:
+                return clean_after[-1]
+        return raw
+
+    def resolve_program_id(self, program_identifier: str) -> str:
+        """Resuelve una URL, handle o GUID al ID oficial del programa en Intigriti."""
+        candidate = self.extract_program_candidate(program_identifier)
+
+        # Si ya tiene formato de GUID/UUID, usar directamente
+        if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", candidate, re.IGNORECASE):
+            return candidate
+
+        # En modo mock: buscar en MOCK_PROGRAM_DETAILS
+        if self.mock_mode:
+            for p_id, details in MOCK_PROGRAM_DETAILS.items():
+                if candidate.lower() in (p_id.lower(), str(details.get("handle", "")).lower()):
+                    return p_id
+            return candidate
+
+        # En modo real: consultar list_programs para resolver handle -> GUID
+        try:
+            programs = self.list_programs(limit=100)
+            for p in programs:
+                p_id = str(p.get("id", ""))
+                p_handle = str(p.get("handle", ""))
+                if candidate.lower() in (p_id.lower(), p_handle.lower()):
+                    return p_id
+            for p in programs:
+                links = str(p.get("webLinks", {}))
+                p_name = str(p.get("name", ""))
+                if candidate.lower() in links.lower() or candidate.lower() in p_name.lower():
+                    return str(p.get("id", ""))
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+        return candidate
+
     def get_program_details(self, program_id: str) -> dict[str, Any]:
-        """Obtiene los detalles completos de un programa por su ID o handle."""
+        """Obtiene los detalles completos de un programa por su ID, handle o URL."""
+        resolved_id = self.resolve_program_id(program_id)
         if self.mock_mode:
             # Buscar por id o por handle
             for p_id, details in MOCK_PROGRAM_DETAILS.items():
-                if p_id == program_id or details.get("handle") == program_id:
+                if resolved_id in (p_id, details.get("handle")) or program_id in (p_id, details.get("handle")):
                     return details
             raise IntigritiNotFoundError(f"Programa '{program_id}' no encontrado en Intigriti (modo mock).")
 
-        url = f"{self.base_url}/programs/{program_id}"
+        url = f"{self.base_url}/programs/{resolved_id}"
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 res = client.get(url, headers=self._get_headers())
                 if res.status_code == 401:
                     raise IntigritiAuthError("Token de Intigriti no válido o expirado.")
                 if res.status_code == 404:
-                    raise IntigritiNotFoundError(f"Programa '{program_id}' no encontrado en Intigriti.")
+                    raise IntigritiNotFoundError(f"Programa '{program_id}' (ID: {resolved_id}) no encontrado en Intigriti.")
                 res.raise_for_status()
                 return res.json()
         except httpx.HTTPError as e:
@@ -289,7 +396,8 @@ class IntigritiClient:
 
     def get_program_domains(self, program_id: str, version_id: str | None = None) -> list[dict[str, Any]]:
         """Obtiene los dominios declarados en el alcance del programa."""
-        details = self.get_program_details(program_id)
+        resolved_id = self.resolve_program_id(program_id)
+        details = self.get_program_details(resolved_id)
         domains_data = details.get("domains")
         if isinstance(domains_data, dict) and "content" in domains_data:
             return domains_data.get("content", [])
@@ -299,7 +407,7 @@ class IntigritiClient:
         if not target_version or self.mock_mode:
             return []
 
-        url = f"{self.base_url}/programs/{program_id}/domains/{target_version}"
+        url = f"{self.base_url}/programs/{resolved_id}/domains/{target_version}"
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 res = client.get(url, headers=self._get_headers())
@@ -311,7 +419,8 @@ class IntigritiClient:
 
     def get_program_roe(self, program_id: str, version_id: str | None = None) -> dict[str, Any]:
         """Obtiene las reglas de compromiso y requisitos de testing."""
-        details = self.get_program_details(program_id)
+        resolved_id = self.resolve_program_id(program_id)
+        details = self.get_program_details(resolved_id)
         roe_data = details.get("rulesOfEngagement")
         if isinstance(roe_data, dict) and "content" in roe_data:
             return roe_data.get("content", {})
@@ -320,7 +429,7 @@ class IntigritiClient:
         if not target_version or self.mock_mode:
             return {}
 
-        url = f"{self.base_url}/programs/{program_id}/rules-of-engagements/{target_version}"
+        url = f"{self.base_url}/programs/{resolved_id}/rules-of-engagements/{target_version}"
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 res = client.get(url, headers=self._get_headers())
