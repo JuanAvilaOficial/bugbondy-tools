@@ -14,10 +14,15 @@ mcp_servers:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
     description: "Acceso a archivos locales de artefactos y reportes"
+  intigriti:
+    command: "bbp"
+    args: ["intigriti-mcp"]
+    description: "Conexión a la Researcher API de Intigriti para selección de clientes y sincronización de scope"
 
 stages:
   "00-scope-manager":
     enabled_mcps:
+      - "intigriti"
       - "sqlite_pipeline"
       - "filesystem"
   "01-recon":

@@ -10,6 +10,8 @@ from pathlib import Path
 from bbpipeline.audit import AuditLogger, verify_audit_file
 from bbpipeline.db import Database, check_kill_switch
 from bbpipeline.doctor import run_checks
+from bbpipeline.intigriti import IntigritiClient, save_token
+from bbpipeline.intigriti_mcp import IntigritiMCPServer
 from bbpipeline.scope import ScopeGuard, ScopeViolationError
 from bbpipeline.templates import TemplateAllowlist, TemplateNotAllowedError
 
@@ -142,6 +144,91 @@ def cmd_mcp_server(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_intigriti_list(args: argparse.Namespace) -> int:
+    client = IntigritiClient(mock_mode=getattr(args, "mock", None))
+    try:
+        programs = client.list_programs(limit=args.limit, status=args.status)
+        if not programs:
+            print("ℹ️  No se encontraron programas disponibles en Intigriti.")
+            return 0
+        print(f"📋 Programas disponibles en Intigriti ({len(programs)}):")
+        print(f"{'ID / Handle':<25} {'Nombre':<32} {'Estado':<10} {'Bounty Max'}")
+        print("-" * 78)
+        for p in programs:
+            handle = p.get("handle") or p.get("id") or "unknown"
+            name = (p.get("name") or "")[:30]
+            st = p.get("status", {}).get("value") if isinstance(p.get("status"), dict) else str(p.get("status", ""))
+            mb = p.get("maxBounty", {})
+            bounty_str = f"{mb.get('value', 0)} {mb.get('currency', 'EUR')}" if isinstance(mb, dict) and "value" in mb else "N/A"
+            print(f"{handle:<25} {name:<32} {st:<10} {bounty_str}")
+        return 0
+    except Exception as e:  # noqa: BLE001
+        print(f"❌ Error al consultar programas de Intigriti: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_intigriti_select(args: argparse.Namespace) -> int:
+    client = IntigritiClient(mock_mode=getattr(args, "mock", None))
+    try:
+        print(f"⏳ Sincronizando programa '{args.program_id}' desde Intigriti...")
+        scope_obj = client.sync_program_to_pipeline(
+            program_id=args.program_id,
+            scope_path=args.scope_path,
+            db_path=args.db_path,
+        )
+        print(f"✅ Cliente '{scope_obj.name}' ({scope_obj.id}) seleccionado y sincronizado con éxito.")
+        print(f"   - Activos in-scope autorizados: {len(scope_obj.in_scope_targets)}")
+        print(f"   - Activos out-of-scope excluidos: {len(scope_obj.out_of_scope_targets)}")
+        reqs = client.extract_testing_requirements(args.program_id)
+        if reqs.get("Request-Header"):
+            print(f"   - Cabecera obligatoria (Safe Harbor): {reqs['Request-Header']}")
+        if reqs.get("User-Agent"):
+            print(f"   - User-Agent requerido: {reqs['User-Agent']}")
+        return 0
+    except Exception as e:  # noqa: BLE001
+        print(f"❌ Error al seleccionar programa de Intigriti: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_intigriti_info(args: argparse.Namespace) -> int:
+    client = IntigritiClient(mock_mode=getattr(args, "mock", None))
+    try:
+        details = client.get_program_details(args.program_id)
+        domains = client.get_program_domains(args.program_id)
+        reqs = client.extract_testing_requirements(args.program_id)
+        print(f"ℹ️  Programa: {details.get('name')} (ID/Handle: {details.get('handle') or details.get('id')})")
+        print(f"   - Total dominios registrados: {len(domains)}")
+        print("   - Testing Requirements:")
+        for k, v in reqs.items():
+            print(f"     * {k}: {v}")
+        return 0
+    except Exception as e:  # noqa: BLE001
+        print(f"❌ Error obteniendo información del programa: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_intigriti_login(args: argparse.Namespace) -> int:
+    token = args.token
+    if not token:
+        import getpass
+        token = getpass.getpass("Ingrese su Researcher API Token de Intigriti: ")
+    if not token.strip():
+        print("❌ Token vacío. Operación cancelada.", file=sys.stderr)
+        return 1
+    target_path = Path(args.credentials_path) if getattr(args, "credentials_path", None) else None
+    target = save_token(token.strip(), path=target_path)
+    print(f"✅ Token de Intigriti guardado de forma segura en: {target}")
+    return 0
+
+
+def cmd_intigriti_mcp(args: argparse.Namespace) -> int:
+    mock = getattr(args, "mock", None)
+    client = IntigritiClient(mock_mode=mock) if mock is not None else None
+    server = IntigritiMCPServer(client=client)
+    server.run_stdio()
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="bbp",
@@ -201,9 +288,42 @@ def main() -> int:
     p_tmpl_check.add_argument("template", help="Plantilla a validar (ej. cves/2021/CVE-2021-44228.yaml)")
     p_tmpl_check.set_defaults(func=cmd_templates_check)
 
-    # Servidor MCP stdio
+    # Servidor MCP stdio de herramientas de seguridad
     p_mcp = subparsers.add_parser("mcp-server", help="Ejecutar servidor MCP JSON-RPC 2.0 sobre stdio")
     p_mcp.set_defaults(func=cmd_mcp_server)
+
+    # Intigriti Researcher API
+    p_inti = subparsers.add_parser("intigriti", help="Comandos de integración con Intigriti")
+    p_inti.add_argument("--mock", action="store_true", default=None, help="Forzar modo de simulación (mock)")
+    inti_subs = p_inti.add_subparsers(dest="intigriti_action", required=True)
+
+    p_i_list = inti_subs.add_parser("list", help="Listar programas y clientes accesibles en Intigriti")
+    p_i_list.add_argument("--limit", type=int, default=20, help="Límite de programas a listar")
+    p_i_list.add_argument("--status", default=None, help="Filtrar por estado (ej. Open)")
+    p_i_list.add_argument("--mock", action="store_true", default=None, help="Forzar modo de simulación (mock)")
+    p_i_list.set_defaults(func=cmd_intigriti_list)
+
+    p_i_sel = inti_subs.add_parser("select", help="Seleccionar un cliente y sincronizar su alcance en el pipeline")
+    p_i_sel.add_argument("program_id", help="ID o handle del programa en Intigriti")
+    p_i_sel.add_argument("--scope-path", default="config/scope.yaml", help="Ruta a scope.yaml")
+    p_i_sel.add_argument("--db-path", default="state/pipeline.db", help="Ruta a pipeline.db")
+    p_i_sel.add_argument("--mock", action="store_true", default=None, help="Forzar modo de simulación (mock)")
+    p_i_sel.set_defaults(func=cmd_intigriti_select)
+
+    p_i_info = inti_subs.add_parser("info", help="Ver detalles y reglas de un programa de Intigriti")
+    p_i_info.add_argument("program_id", help="ID o handle del programa")
+    p_i_info.add_argument("--mock", action="store_true", default=None, help="Forzar modo de simulación (mock)")
+    p_i_info.set_defaults(func=cmd_intigriti_info)
+
+    p_i_login = inti_subs.add_parser("login", help="Guardar el Researcher API Token de Intigriti localmente")
+    p_i_login.add_argument("--token", default=None, help="API Token de Intigriti (o ingresar por prompt)")
+    p_i_login.add_argument("--credentials-path", default=None, help="Ruta personalizada del archivo credentials.json")
+    p_i_login.set_defaults(func=cmd_intigriti_login)
+
+    # Servidor MCP de Intigriti sobre stdio
+    p_inti_mcp = subparsers.add_parser("intigriti-mcp", help="Ejecutar servidor MCP de Intigriti sobre stdio")
+    p_inti_mcp.add_argument("--mock", action="store_true", default=None, help="Forzar modo de simulación (mock)")
+    p_inti_mcp.set_defaults(func=cmd_intigriti_mcp)
 
     args = parser.parse_args()
     return args.func(args)

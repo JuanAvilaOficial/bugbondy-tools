@@ -19,3 +19,4 @@ Garantizar que todo objetivo (dominio, subdominio, IP, URL o CIDR) analizado per
 ## Reglas
 - Cualquier activo ambiguo o out-of-scope debe ser descartado inmediatamente.
 - Bloqueo preventivo antes de que cualquier otra etapa del pipeline procese el objetivo.
+- Integración Intigriti: Selección de cliente obligatoria vía `intigriti_select_client` o `bbp intigriti select <id>` para sincronizar alcance oficial y requisitos de testing antes de iniciar cualquier fase de reconocimiento.
