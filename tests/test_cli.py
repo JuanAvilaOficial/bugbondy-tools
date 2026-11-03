@@ -22,8 +22,23 @@ def test_cli_scope_check():
     assert "OUT OF SCOPE" in res_oos.stderr
 
 
-def test_cli_audit_verify():
-    res = run_cli("audit", "verify", "--log-path", "logs/audit.jsonl")
+def test_cli_audit_verify(tmp_path):
+    log_path = str(tmp_path / "test_audit.jsonl")
+    res_log = run_cli(
+        "audit",
+        "log",
+        "--stage",
+        "00-scope-manager",
+        "--event",
+        "target_checked",
+        "--target",
+        "test.com",
+        "--log-path",
+        log_path,
+    )
+    assert res_log.returncode == 0
+
+    res = run_cli("audit", "verify", "--log-path", log_path)
     assert res.returncode == 0
     assert "Auditoría íntegra y verificada" in res.stdout
 
