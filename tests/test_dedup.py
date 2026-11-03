@@ -85,3 +85,44 @@ def test_custom_threshold_changes_detection(tmp_path):
 
     # Con umbral muy alto, el hallazgo identico sigue siendo duplicado (sim=1.0)
     assert is_duplicate is True
+
+
+def test_semantic_security_embedder_synonym_recognition():
+    # Sinónimos semánticos que no comparten palabras exactas:
+    v_xss1 = embed("Cross-site scripting in search parameter")
+    v_xss2 = embed("Reflected XSS on query input")
+    sim_xss = cosine_similarity(v_xss1, v_xss2)
+
+    # Deben tener alta similitud semántica (> 0.60)
+    assert sim_xss > 0.60
+
+    # Vulnerabilidad distinta (SQLi)
+    v_sqli = embed("SQL injection in user login database")
+    sim_diff = cosine_similarity(v_xss1, v_sqli)
+
+    # Debe ser marcadamente baja (< 0.25)
+    assert sim_diff < 0.25
+
+
+def test_deduplicator_catches_semantic_synonym_duplicates(tmp_path):
+    dedup = FindingDeduplicator(threshold=0.60, storage_path=tmp_path / "semantic_dedup.json")
+    dedup.add("Cross-site scripting in search parameter", finding_id=101)
+
+    # Entrada con vocabulario equivalente pero diferente (XSS vs Cross-site scripting)
+    is_dup, sim, match = dedup.check_duplicate("Reflected XSS on query input")
+
+    assert is_dup is True
+    assert sim > 0.60
+    assert match is not None
+    assert match.finding_id == 101
+
+
+def test_semantic_contrast_between_different_vulnerabilities():
+    v_rce = embed("Remote code execution via command injection")
+    v_ssrf = embed("Server-side request forgery in webhook url")
+    v_idor = embed("Insecure direct object reference on user profile")
+
+    # Clases disjuntas deben arrojar similitud baja
+    assert cosine_similarity(v_rce, v_ssrf) < 0.30
+    assert cosine_similarity(v_rce, v_idor) < 0.30
+    assert cosine_similarity(v_ssrf, v_idor) < 0.30

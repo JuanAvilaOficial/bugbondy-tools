@@ -170,3 +170,64 @@ programs:
 
     assert limiter.consume().allowed is True
     assert limiter.consume().allowed is False
+
+
+def test_sqlite_persistence_across_multiple_instances(tmp_path):
+    db_file = tmp_path / "cross_process_ratelimit.db"
+    cfg = RateLimitsConfig(
+        programs={"shared-prog": ProgramRateLimit(max_requests_per_second=2, concurrency=5)},
+    )
+    now = 2_000_000.0
+
+    # Proceso 1 (instancia A)
+    proc1 = RateLimiter(config=cfg, storage_path=db_file)
+    assert proc1.consume(program_id="shared-prog", now=now).allowed is True
+    assert proc1.consume(program_id="shared-prog", now=now).allowed is True
+
+    # Proceso 2 (instancia B, nuevo proceso leyendo la misma BD)
+    proc2 = RateLimiter(config=cfg, storage_path=db_file)
+    denied = proc2.consume(program_id="shared-prog", now=now)
+    assert denied.allowed is False
+    assert denied.remaining == 0.0
+
+    # Esperar 1 segundo: Proceso 2 debe poder consumir gracias al refill persistido
+    assert proc2.consume(program_id="shared-prog", now=now + 1.0).allowed is True
+
+
+def test_sqlite_daily_budget_persists_across_instances(tmp_path):
+    db_file = tmp_path / "cross_process_budget.db"
+    cfg = RateLimitsConfig(
+        programs={"budget-prog": ProgramRateLimit(max_requests_per_second=100, daily_request_budget=2)},
+    )
+    now = 2_000_000.0
+
+    proc_a = RateLimiter(config=cfg, storage_path=db_file)
+    proc_b = RateLimiter(config=cfg, storage_path=db_file)
+
+    assert proc_a.consume(program_id="budget-prog", now=now).allowed is True
+    assert proc_b.consume(program_id="budget-prog", now=now).allowed is True
+
+    # El presupuesto diario es 2: ambas instancias deben ver el presupuesto agotado
+    assert proc_a.consume(program_id="budget-prog", now=now).allowed is False
+    assert proc_b.consume(program_id="budget-prog", now=now).allowed is False
+
+
+def test_sqlite_concurrency_throttle_across_instances(tmp_path):
+    db_file = tmp_path / "cross_process_throttle.db"
+    cfg = RateLimitsConfig(
+        programs={"concurrent-prog": ProgramRateLimit(max_requests_per_second=100, concurrency=1)},
+    )
+    now = 2_000_000.0
+
+    worker1 = RateLimiter(config=cfg, storage_path=db_file)
+    worker2 = RateLimiter(config=cfg, storage_path=db_file)
+
+    with worker1.throttle(program_id="concurrent-prog", now=now) as slot1:
+        assert slot1.allowed is True
+        # worker2 intenta adquirir slot mientras worker1 lo tiene ocupado
+        with worker2.throttle(program_id="concurrent-prog", now=now) as slot2:
+            assert slot2.allowed is False
+
+    # Una vez liberado por worker1, worker2 puede adquirirlo
+    with worker2.throttle(program_id="concurrent-prog", now=now) as slot3:
+        assert slot3.allowed is True

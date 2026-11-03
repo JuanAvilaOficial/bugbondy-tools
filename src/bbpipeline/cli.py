@@ -134,6 +134,14 @@ def cmd_templates_check(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_mcp_server(args: argparse.Namespace) -> int:
+    from bbpipeline.mcp_server import SecurityMCPServer
+
+    server = SecurityMCPServer()
+    server.run_stdio()
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="bbp",
@@ -192,6 +200,10 @@ def main() -> int:
     p_tmpl_check = p_tmpl_sub.add_parser("check", help="Validar una plantilla contra la allowlist")
     p_tmpl_check.add_argument("template", help="Plantilla a validar (ej. cves/2021/CVE-2021-44228.yaml)")
     p_tmpl_check.set_defaults(func=cmd_templates_check)
+
+    # Servidor MCP stdio
+    p_mcp = subparsers.add_parser("mcp-server", help="Ejecutar servidor MCP JSON-RPC 2.0 sobre stdio")
+    p_mcp.set_defaults(func=cmd_mcp_server)
 
     args = parser.parse_args()
     return args.func(args)
